@@ -46,7 +46,7 @@ cargo run -- examples/access_control.ssharp
 
 ### Option 1: Download the Installer (Recommended)
 
-1. Download the latest `SSharp-Setup.exe` from the [Releases](https://github.com/ssharp-lang/ssharp/releases) page.
+1. Download the latest `SSharp-Setup.exe` from the [Releases](https://github.com/S-Sharp/releases) page.
 2. Run the installer.
 3. **Check the box "Add S# to PATH (recommended)"** when prompted.
 4. **Open a NEW terminal window** (PowerShell, CMD, or Windows Terminal) — existing terminals won't see the PATH change.
