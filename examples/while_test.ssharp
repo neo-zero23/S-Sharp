@@ -1,0 +1,3 @@
+when (test).
+save 0 to counter.
+while (counter < 3), display counter, save counter + 1 to counter.

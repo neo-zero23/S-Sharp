@@ -1,0 +1,4 @@
+when (start_clicked).
+ask "How old are you?" and save to age.
+if (age >= 18), display "Access granted".
+if (age < 18), display "Access denied".

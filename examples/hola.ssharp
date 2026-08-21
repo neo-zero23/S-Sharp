@@ -1,0 +1,2 @@
+when (start_clicked).
+display "Hola mundo, esto es otro programa totalmente distinto".

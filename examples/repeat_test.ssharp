@@ -1,0 +1,2 @@
+when (test).
+repeat (3), display "Hello".
