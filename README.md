@@ -59,16 +59,12 @@ cargo run -- examples/access_control.ssharp
 ### Option 2: Build the Installer Yourself
 
 If you want to build the installer from source:
-
-1. Install [Inno Setup Compiler](https://jrsoftware.org/isinfo.php) (free).
-2. **Convert a logo to `.ico` format** (required for the installer icon):
-   - The `logos/` folder contains PNG/SVG files.
-   - Use an online converter like [convertio.co](https://convertio.co/png-ico/) or [icoconvert.com](https://icoconvert.com/).
-   - Convert `logos/256x256.png` → save as `logos/ssharp.ico`.
-3. Open `installer.iss` in Inno Setup Compiler (right-click → "Compile" or File → Open).
-4. Click **Build** → the installer `SSharp-Setup.exe` will be created in the `Output/` folder.
-5. Run the generated installer and follow steps 2-5 from Option 1.
-
+1. Clone or download this repository.
+2. Install [Inno Setup Compiler](https://jrsoftware.org/isinfo.php).
+3. Open `installer.iss` in Inno Setup Compiler.
+4. Click **Build → Compile** (or press `Ctrl + F9`).
+5. The generated `SSharp-Setup.exe` will be created in the `Output/` folder.
+   
 ### Usage After Installation
 
 ```powershell
