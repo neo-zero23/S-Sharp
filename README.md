@@ -1,6 +1,7 @@
 # S# Language Interpreter
 
-<img width="320" height="322" alt="256x256" src="https://github.com/user-attachments/assets/631208b0-5d66-4cca-a44e-e314bd0ae78f" />
+<img width="256" height="256" alt="256x256" src="https://github.com/user-attachments/assets/12ed5903-24f8-440d-bae8-9661dc6e314c" />
+
 
 
 **S#** (pronounced "S-sharp") is an educational programming language designed with the philosophy: **"Scratch in text form"**.
