@@ -1,11 +1,12 @@
 use std::env;
 use std::fs;
+use std::io;
 use std::process;
 
 use ssharp::error::SSharpError;
 use ssharp::lexer::Lexer;
 use ssharp::parser::Parser;
-use ssharp::interpreter::Interpreter;
+use ssharp::interpreter::{Interpreter, run_repl};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -24,10 +25,11 @@ fn main() {
         process::exit(0);
     }
 
-    // No arguments provided - show usage and exit with error code
+    // No file provided - start the interactive REPL
     if args.len() < 2 {
-        print_usage(&args[0]);
-        process::exit(1);
+        let stdin = io::stdin();
+        run_repl(stdin.lock(), io::stdout());
+        process::exit(0);
     }
 
     let file_path = &args[1];
@@ -47,12 +49,13 @@ fn main() {
 }
 
 fn print_usage(program_name: &str) {
-    println!("Usage: {} <file.ssharp>", program_name);
+    println!("Usage: {} [file.ssharp]", program_name);
     println!();
-    println!("Run an S# script file.");
+    println!("Run an S# script file, or start the interactive REPL when no file is given.");
     println!();
-    println!("Example:");
+    println!("Examples:");
     println!("  {} my_program.ssharp", program_name);
+    println!("  {}                         # start the REPL", program_name);
     println!();
     println!("Options:");
     println!("  -h, --help     Print this help message and exit");

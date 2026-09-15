@@ -70,11 +70,30 @@ impl Lexer {
                     '.' => TokenKind::Period,
                     '(' => TokenKind::LParen,
                     ')' => TokenKind::RParen,
-                    '+' => TokenKind::Plus,
+                    '+' => {
+                        if self.peek() == Some('+') {
+                            self.advance();
+                            TokenKind::PlusPlus
+                        } else {
+                            TokenKind::Plus
+                        }
+                    }
                     '-' => TokenKind::Minus,
                     '*' => TokenKind::Star,
                     '/' => TokenKind::Slash,
                     '=' => TokenKind::Equals,
+                    '!' => {
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            TokenKind::NotEqual
+                        } else {
+                            return Err(SSharpError::LexError {
+                                message: "Unexpected character '!', did you mean '!='?".to_string(),
+                                line,
+                                column,
+                            });
+                        }
+                    }
                     '>' => {
                         if self.peek() == Some('=') {
                             self.advance();
@@ -131,11 +150,52 @@ impl Lexer {
         self.advance(); // Consume opening quote '"'
 
         let mut content = String::new();
-        // TODO: Add support for escape sequences like \n, \", \\ in future milestones
         while let Some(ch) = self.peek() {
             if ch == '"' {
                 self.advance(); // Consume closing quote
                 return Ok(Token::new(TokenKind::String(content), start_line, start_column));
+            }
+            if ch == '\\' {
+                self.advance(); // Consume '\'
+                match self.peek() {
+                    Some('n') => {
+                        content.push('\n');
+                        self.advance();
+                    }
+                    Some('t') => {
+                        content.push('\t');
+                        self.advance();
+                    }
+                    Some('r') => {
+                        content.push('\r');
+                        self.advance();
+                    }
+                    Some('"') => {
+                        content.push('"');
+                        self.advance();
+                    }
+                    Some('\\') => {
+                        content.push('\\');
+                        self.advance();
+                    }
+                    Some('0') => {
+                        content.push('\0');
+                        self.advance();
+                    }
+                    Some(other) => {
+                        // Unknown escape: keep the character as-is (drop backslash)
+                        content.push(other);
+                        self.advance();
+                    }
+                    None => {
+                        return Err(SSharpError::LexError {
+                            message: "Unterminated string literal".to_string(),
+                            line: start_line,
+                            column: start_column,
+                        });
+                    }
+                }
+                continue;
             }
             content.push(ch);
             self.advance();
@@ -198,11 +258,16 @@ impl Lexer {
             "and" => TokenKind::And,
             "display" => TokenKind::Display,
             "if" => TokenKind::If,
+            "else" => TokenKind::Else,
             "repeat" => TokenKind::Repeat,
             "while" => TokenKind::While,
             "define" => TokenKind::Define,
             "function" => TokenKind::Function,
             "return" => TokenKind::Return,
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
+            "or" => TokenKind::Or,
+            "not" => TokenKind::Not,
             _ => TokenKind::Identifier(word),
         };
 
@@ -217,13 +282,14 @@ mod tests {
 
     #[test]
     fn test_keywords_and_identifiers() {
-        let mut lexer = Lexer::new("when ask save to and display if repeat while define function return score");
+        let mut lexer = Lexer::new("when ask save to and display if else repeat while define function return true false or not score");
         let tokens = lexer.tokenize().unwrap();
         let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
             vec![
-                When, Ask, Save, To, And, Display, If, Repeat, While, Define, Function, Return,
+                When, Ask, Save, To, And, Display, If, Else, Repeat, While, Define, Function, Return,
+                True, False, Or, Not,
                 Identifier("score".into()),
                 Eof
             ]
@@ -264,19 +330,48 @@ mod tests {
     }
 
     #[test]
-    fn test_operators() {
-        let mut lexer = Lexer::new("+ - * / = > < >= <=");
+    fn test_string_escape_sequences() {
+        let mut lexer = Lexer::new(r#"display "a\nb\tc\"q\"\\"."#);
         let tokens = lexer.tokenize().unwrap();
         let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
-            vec![Plus, Minus, Star, Slash, Equals, Greater, Less, GreaterEq, LessEq, Eof]
+            vec![
+                Display,
+                String("a\nb\tc\"q\"\\".into()),
+                Period,
+                Eof
+            ]
         );
     }
 
     #[test]
-    fn test_unknown_symbol_error() {
-        let mut lexer = Lexer::new("when %");
+    fn test_operators() {
+        let mut lexer = Lexer::new("+ - * / = > < >= <= != ++");
+        let tokens = lexer.tokenize().unwrap();
+        let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![Plus, Minus, Star, Slash, Equals, Greater, Less, GreaterEq, LessEq, NotEqual, PlusPlus, Eof]
+        );
+    }
+
+    #[test]
+    fn test_lone_bang_error() {
+        let mut lexer = Lexer::new("display !.");
+        let err = lexer.tokenize().unwrap_err();
+        match err {
+            SSharpError::LexError { message, line, column } => {
+                assert!(message.contains("'!'"), "Unexpected message: {}", message);
+                assert_eq!(line, 1);
+                assert_eq!(column, 9);
+            }
+            _ => panic!("Expected LexError"),
+        }
+    }
+
+    #[test]
+    fn test_unknown_symbol_error() {        let mut lexer = Lexer::new("when %");
         let err = lexer.tokenize().unwrap_err();
         match err {
             SSharpError::LexError { message, line, column } => {

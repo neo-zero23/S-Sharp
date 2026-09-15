@@ -24,6 +24,18 @@ impl Parser {
         &self.peek().kind
     }
 
+    fn peek_next_kind(&self) -> Option<&TokenKind> {
+        self.tokens.get(self.pos + 1).map(|t| &t.kind)
+    }
+
+    /// Returns true if the upcoming `and` is the `and save to <var>` construct
+    /// (i.e. `and` is directly followed by `save`), in which case it must NOT
+    /// be treated as a logical AND operator.
+    fn and_is_save_construct(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::And)
+            && matches!(self.peek_next_kind(), Some(TokenKind::Save))
+    }
+
     fn is_at_end(&self) -> bool {
         matches!(self.peek_kind(), TokenKind::Eof)
     }
@@ -245,8 +257,31 @@ impl Parser {
         self.consume(TokenKind::RParen, "Expected ')' after if condition")?;
         self.consume(TokenKind::Comma, "Expected ',' after 'if (...)' condition")?;
 
-        let actions = self.parse_action_list()?;
-        Ok(Stmt::If { condition, actions })
+        let actions = self.parse_then_actions()?;
+
+        // Optional `else` branch: `..., else action1, action2.`
+        // An optional comma after `else` is allowed: `else, display "x".`
+        let else_actions = if matches!(self.peek_kind(), TokenKind::Else) {
+            self.advance(); // consume 'else'
+            if matches!(self.peek_kind(), TokenKind::Comma) {
+                self.advance(); // consume optional ',' after 'else'
+            }
+            // `else if (...)...` chaining: single nested if consumes its own '.'
+            if matches!(self.peek_kind(), TokenKind::If) {
+                let nested = self.parse_if_stmt()?;
+                Some(vec![nested])
+            } else {
+                Some(self.parse_action_list()?)
+            }
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            condition,
+            actions,
+            else_actions,
+        })
     }
 
     fn parse_repeat_stmt(&mut self) -> Result<Stmt, SSharpError> {
@@ -327,6 +362,40 @@ impl Parser {
         Ok(Stmt::FunctionDef { name, params, return_expr })
     }
 
+    fn parse_then_actions(&mut self) -> Result<Vec<Stmt>, SSharpError> {
+        let mut actions = Vec::new();
+        loop {
+            let action = self.parse_action()?;
+            actions.push(action);
+
+            let tok = self.peek();
+            if matches!(tok.kind, TokenKind::Comma) {
+                // `, else` ends the then-branch (comma is the separator before else)
+                let next_is_else = matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                    Some(TokenKind::Else)
+                );
+                self.advance(); // consume ','
+                if next_is_else {
+                    break;
+                }
+            } else if matches!(tok.kind, TokenKind::Else) {
+                // `else` without preceding comma also ends the then-branch
+                break;
+            } else if matches!(tok.kind, TokenKind::Period) {
+                self.advance(); // consume '.' and finish (no else branch)
+                break;
+            } else {
+                return Err(SSharpError::ParseError {
+                    message: format!("Expected ',' or '.' after action in statement body, found {:?}", tok.kind),
+                    line: tok.line,
+                    column: tok.column,
+                });
+            }
+        }
+        Ok(actions)
+    }
+
     fn parse_action_list(&mut self) -> Result<Vec<Stmt>, SSharpError> {
         let mut actions = Vec::new();
         loop {
@@ -351,8 +420,42 @@ impl Parser {
     }
 
     // --- Expression Parsing with Precedence ---
+    // Lowest to highest: or -> and -> comparison -> additive -> multiplicative -> unary -> primary
 
     fn parse_expression(&mut self) -> Result<Expr, SSharpError> {
+        self.parse_or()
+    }
+
+    fn parse_or(&mut self) -> Result<Expr, SSharpError> {
+        let mut left = self.parse_and()?;
+        while matches!(self.peek_kind(), TokenKind::Or) {
+            self.advance();
+            let right = self.parse_and()?;
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::Or,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_and(&mut self) -> Result<Expr, SSharpError> {
+        let mut left = self.parse_comparison()?;
+        // `and` directly followed by `save` is the `and save to` construct, not logic
+        while matches!(self.peek_kind(), TokenKind::And) && !self.and_is_save_construct() {
+            self.advance();
+            let right = self.parse_comparison()?;
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::And,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_comparison(&mut self) -> Result<Expr, SSharpError> {
         let mut left = self.parse_additive()?;
 
         while let Some(op) = self.match_comparison_op() {
@@ -370,6 +473,7 @@ impl Parser {
     fn match_comparison_op(&mut self) -> Option<BinOp> {
         let op = match self.peek_kind() {
             TokenKind::Equals => BinOp::Eq,
+            TokenKind::NotEqual => BinOp::NotEq,
             TokenKind::Greater => BinOp::Gt,
             TokenKind::Less => BinOp::Lt,
             TokenKind::GreaterEq => BinOp::GtEq,
@@ -398,6 +502,7 @@ impl Parser {
     fn match_additive_op(&mut self) -> Option<BinOp> {
         let op = match self.peek_kind() {
             TokenKind::Plus => BinOp::Add,
+            TokenKind::PlusPlus => BinOp::Concat,
             TokenKind::Minus => BinOp::Sub,
             _ => return None,
         };
@@ -406,10 +511,10 @@ impl Parser {
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr, SSharpError> {
-        let mut left = self.parse_primary()?;
+        let mut left = self.parse_unary()?;
 
         while let Some(op) = self.match_multiplicative_op() {
-            let right = self.parse_primary()?;
+            let right = self.parse_unary()?;
             left = Expr::Binary {
                 left: Box::new(left),
                 op,
@@ -430,6 +535,26 @@ impl Parser {
         Some(op)
     }
 
+    fn parse_unary(&mut self) -> Result<Expr, SSharpError> {
+        if matches!(self.peek_kind(), TokenKind::Not) {
+            self.advance();
+            let expr = self.parse_unary()?;
+            return Ok(Expr::Unary {
+                op: UnOp::Not,
+                expr: Box::new(expr),
+            });
+        }
+        if matches!(self.peek_kind(), TokenKind::Minus) {
+            self.advance();
+            let expr = self.parse_unary()?;
+            return Ok(Expr::Unary {
+                op: UnOp::Neg,
+                expr: Box::new(expr),
+            });
+        }
+        self.parse_primary()
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, SSharpError> {
         let tok = self.peek().clone();
 
@@ -442,9 +567,36 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Str(val.clone()))
             }
-            TokenKind::Identifier(id) => {
+            TokenKind::True => {
                 self.advance();
-                Ok(Expr::Identifier(id.clone()))
+                Ok(Expr::Bool(true))
+            }
+            TokenKind::False => {
+                self.advance();
+                Ok(Expr::Bool(false))
+            }
+            TokenKind::Identifier(id) => {
+                let name = id.clone();
+                self.advance();
+                // Function call: `name(arg1, arg2, ...)`
+                if matches!(self.peek_kind(), TokenKind::LParen) {
+                    self.advance(); // consume '('
+                    let mut args = Vec::new();
+                    if !matches!(self.peek_kind(), TokenKind::RParen) {
+                        loop {
+                            args.push(self.parse_expression()?);
+                            if matches!(self.peek_kind(), TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(TokenKind::RParen, "Expected ')' after function call arguments")?;
+                    Ok(Expr::Call { name, args })
+                } else {
+                    Ok(Expr::Identifier(name))
+                }
             }
             TokenKind::LParen => {
                 self.advance(); // consume '('
@@ -453,7 +605,7 @@ impl Parser {
                 Ok(expr)
             }
             _ => Err(SSharpError::ParseError {
-                message: format!("Expected expression primary (number, string, variable, or '(expr)'), found {:?}", tok.kind),
+                message: format!("Expected expression (number, string, true/false, variable, function call, or '(expr)'), found {:?}", tok.kind),
                 line: tok.line,
                 column: tok.column,
             }),
@@ -492,17 +644,120 @@ mod tests {
         }
 
         match &program.event.body[1] {
-            Stmt::If { condition, actions } => {
+            Stmt::If { condition, actions, else_actions } => {
                 assert_eq!(actions.len(), 1);
                 assert!(matches!(condition, Expr::Binary { op: BinOp::GtEq, .. }));
+                assert!(else_actions.is_none());
             }
             _ => panic!("Expected Stmt::If"),
         }
 
         match &program.event.body[2] {
-            Stmt::If { condition, actions } => {
+            Stmt::If { condition, actions, else_actions } => {
                 assert_eq!(actions.len(), 1);
                 assert!(matches!(condition, Expr::Binary { op: BinOp::Lt, .. }));
+                assert!(else_actions.is_none());
+            }
+            _ => panic!("Expected Stmt::If"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_else() {
+        let source = r#"when (test). if (age >= 18), display "granted", else display "denied"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 1);
+        match &program.event.body[0] {
+            Stmt::If { condition, actions, else_actions } => {
+                assert!(matches!(condition, Expr::Binary { op: BinOp::GtEq, .. }));
+                assert_eq!(actions.len(), 1);
+                let else_branch = else_actions.as_ref().expect("Expected else branch");
+                assert_eq!(else_branch.len(), 1);
+                assert!(matches!(else_branch[0], Stmt::Display { .. }));
+            }
+            _ => panic!("Expected Stmt::If with else"),
+        }
+    }
+
+    #[test]
+    fn test_parse_else_if_chain() {
+        let source = r#"when (test). if (x), display "a", else if (y), display "b", else display "c"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::If { else_actions, .. } => {
+                let else_branch = else_actions.as_ref().expect("Expected else branch");
+                assert_eq!(else_branch.len(), 1);
+                assert!(matches!(else_branch[0], Stmt::If { .. }));
+            }
+            _ => panic!("Expected Stmt::If"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call_and_booleans() {
+        let source = "when (test). define function add(a, b), return a + b. save add(5, 3) to result. if (true or not false), display result.";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 3);
+        assert!(matches!(&program.event.body[0], Stmt::FunctionDef { name, .. } if name == "add"));
+        match &program.event.body[1] {
+            Stmt::Assign { value, target } => {
+                assert_eq!(target, "result");
+                assert!(matches!(value, Expr::Call { name, args } if name == "add" && args.len() == 2));
+            }
+            _ => panic!("Expected Stmt::Assign with call"),
+        }
+        match &program.event.body[2] {
+            Stmt::If { condition, .. } => {
+                assert!(matches!(condition, Expr::Binary { op: BinOp::Or, .. }));
+            }
+            _ => panic!("Expected Stmt::If"),
+        }
+    }
+
+    #[test]
+    fn test_parse_and_save_disambiguation() {
+        // `and save to` must remain an assignment, not a logical AND
+        let source = r#"when (test). save 5 to x. 10 and save to y."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 2);
+        assert!(matches!(&program.event.body[1], Stmt::Assign { target, .. } if target == "y"));
+    }
+
+    #[test]
+    fn test_parse_not_equal_and_concat() {
+        let source = r#"when (test). if (name != "admin"), display "hi " ++ name."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::If { condition, actions, else_actions } => {
+                assert!(matches!(condition, Expr::Binary { op: BinOp::NotEq, .. }));
+                assert!(else_actions.is_none());
+                assert_eq!(actions.len(), 1);
+                match &actions[0] {
+                    Stmt::Display { value } => {
+                        assert!(matches!(value, Expr::Binary { op: BinOp::Concat, .. }));
+                    }
+                    _ => panic!("Expected Stmt::Display with concat"),
+                }
             }
             _ => panic!("Expected Stmt::If"),
         }

@@ -8,11 +8,16 @@ pub enum TokenKind {
     And,
     Display,
     If,
+    Else,
     Repeat,
     While,
     Define,
     Function,
     Return,
+    True,
+    False,
+    Or,
+    Not,
 
     // Literals & Identifiers
     Identifier(String),
@@ -27,10 +32,12 @@ pub enum TokenKind {
 
     // Operators
     Plus,
+    PlusPlus,
     Minus,
     Star,
     Slash,
     Equals,
+    NotEqual,
     Greater,
     Less,
     GreaterEq,

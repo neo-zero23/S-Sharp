@@ -1,14 +1,24 @@
 pub mod environment;
 pub mod value;
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use environment::Environment;
 use value::Value;
 use crate::error::SSharpError;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 use crate::parser::ast::*;
+
+#[derive(Debug, Clone)]
+struct Function {
+    params: Vec<String>,
+    body: Expr,
+}
 
 pub struct Interpreter<R, W> {
     env: Environment,
+    functions: HashMap<String, Function>,
     reader: R,
     writer: W,
 }
@@ -17,6 +27,7 @@ impl Interpreter<io::BufReader<io::Stdin>, io::Stdout> {
     pub fn new() -> Self {
         Self {
             env: Environment::new(),
+            functions: HashMap::new(),
             reader: io::BufReader::new(io::stdin()),
             writer: io::stdout(),
         }
@@ -27,6 +38,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
     pub fn with_io(reader: R, writer: W) -> Self {
         Self {
             env: Environment::new(),
+            functions: HashMap::new(),
             reader,
             writer,
         }
@@ -75,10 +87,14 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     message: format!("IO Error writing display output: {}", e),
                 })?;
             }
-            Stmt::If { condition, actions } => {
+            Stmt::If { condition, actions, else_actions } => {
                 let cond_val = self.eval_expr(condition)?;
                 if cond_val.is_truthy() {
                     for action in actions {
+                        self.exec_stmt(action)?;
+                    }
+                } else if let Some(else_branch) = else_actions {
+                    for action in else_branch {
                         self.exec_stmt(action)?;
                     }
                 }
@@ -105,19 +121,57 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     }
                 }
             }
-            Stmt::FunctionDef { .. } => {
-                // Reserved for function definitions in future milestones
+            Stmt::FunctionDef { name, params, return_expr } => {
+                self.functions.insert(
+                    name.clone(),
+                    Function {
+                        params: params.clone(),
+                        body: return_expr.clone(),
+                    },
+                );
             }
         }
         Ok(())
     }
 
-    fn eval_expr(&self, expr: &Expr) -> Result<Value, SSharpError> {
+    fn eval_expr(&mut self, expr: &Expr) -> Result<Value, SSharpError> {
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::Str(s) => Ok(Value::Str(s.clone())),
+            Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Identifier(id) => self.env.get(id),
+            Expr::Call { name, args } => self.eval_call(name, args),
+            Expr::Unary { op, expr } => {
+                let val = self.eval_expr(expr)?;
+                match op {
+                    UnOp::Not => Ok(Value::Bool(!val.is_truthy())),
+                    UnOp::Neg => {
+                        let n = self.require_number(&val, "-")?;
+                        Ok(Value::Number(-n))
+                    }
+                }
+            }
             Expr::Binary { left, op, right } => {
+                // Short-circuit logical operators
+                match op {
+                    BinOp::Or => {
+                        let l_val = self.eval_expr(left)?;
+                        if l_val.is_truthy() {
+                            return Ok(Value::Bool(true));
+                        }
+                        let r_val = self.eval_expr(right)?;
+                        return Ok(Value::Bool(r_val.is_truthy()));
+                    }
+                    BinOp::And => {
+                        let l_val = self.eval_expr(left)?;
+                        if !l_val.is_truthy() {
+                            return Ok(Value::Bool(false));
+                        }
+                        let r_val = self.eval_expr(right)?;
+                        return Ok(Value::Bool(r_val.is_truthy()));
+                    }
+                    _ => {}
+                }
                 let l_val = self.eval_expr(left)?;
                 let r_val = self.eval_expr(right)?;
                 self.eval_binary_op(&l_val, *op, &r_val)
@@ -125,8 +179,38 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
         }
     }
 
+    fn eval_call(&mut self, name: &str, args: &[Expr]) -> Result<Value, SSharpError> {
+        let func = self.functions.get(name).cloned().ok_or_else(|| SSharpError::RuntimeError {
+            message: format!("Undefined function '{}'", name),
+        })?;
+        if args.len() != func.params.len() {
+            return Err(SSharpError::RuntimeError {
+                message: format!(
+                    "Function '{}' expects {} argument(s), got {}",
+                    name,
+                    func.params.len(),
+                    args.len()
+                ),
+            });
+        }
+        let mut evaluated = Vec::with_capacity(args.len());
+        for arg in args {
+            evaluated.push(self.eval_expr(arg)?);
+        }
+        // Isolate function scope: save caller env, bind params, eval, restore
+        let saved_env = self.env.clone();
+        for (param, val) in func.params.iter().zip(evaluated) {
+            self.env.set(param, val);
+        }
+        let result = self.eval_expr(&func.body);
+        self.env = saved_env;
+        result
+    }
+
     fn eval_binary_op(&self, left: &Value, op: BinOp, right: &Value) -> Result<Value, SSharpError> {
         match op {
+            BinOp::Or => Ok(Value::Bool(left.is_truthy() || right.is_truthy())),
+            BinOp::And => Ok(Value::Bool(left.is_truthy() && right.is_truthy())),
             BinOp::Add => {
                 if matches!(left, Value::Str(_)) || matches!(right, Value::Str(_)) {
                     Ok(Value::Str(format!("{}{}", left, right)))
@@ -137,6 +221,11 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                         message: format!("Cannot add '{}' and '{}'", left, right),
                     })
                 }
+            }
+            BinOp::Concat => {
+                // Explicit concatenation: always joins the text of both sides.
+                // Unlike `+`, numbers are NOT added: `1 ++ 2` is "12", not 3.
+                Ok(Value::Str(format!("{}{}", left, right)))
             }
             BinOp::Sub => {
                 let l = self.require_number(left, "-")?;
@@ -163,6 +252,13 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     Ok(Value::Bool((l - r).abs() < f64::EPSILON))
                 } else {
                     Ok(Value::Bool(left.to_string() == right.to_string()))
+                }
+            }
+            BinOp::NotEq => {
+                if let (Some(l), Some(r)) = (left.as_number(), right.as_number()) {
+                    Ok(Value::Bool((l - r).abs() >= f64::EPSILON))
+                } else {
+                    Ok(Value::Bool(left.to_string() != right.to_string()))
                 }
             }
             BinOp::Gt => {
@@ -201,6 +297,104 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             message: format!("Operator '{}' requires numeric operand, got '{}'", op, val),
         })
     }
+}
+
+/// Interactive REPL driver.
+///
+/// Reads S# fragments from `reader` (each fragment must end with `.`),
+/// keeps variables and functions alive between fragments, and writes
+/// prompts plus program output to `writer`. Ends on EOF (Ctrl-D),
+/// `:quit` or `:exit`.
+pub fn run_repl<R: BufRead, W: Write>(reader: R, writer: W) {
+    let mut interpreter = Interpreter::with_io(reader, writer);
+    let version = env!("CARGO_PKG_VERSION");
+    writeln!(interpreter.writer, "S# (ssharp) v{} -- interactive mode.", version).ok();
+    writeln!(
+        interpreter.writer,
+        "Type any S# fragment ending with '.'. Commands: :help, :reset, :quit."
+    )
+    .ok();
+
+    let mut buffer = String::new();
+    loop {
+        let prompt = if buffer.is_empty() { ">> " } else { ".. " };
+        write!(interpreter.writer, "{}", prompt).ok();
+        interpreter.writer.flush().ok();
+
+        let mut line = String::new();
+        match interpreter.reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {}
+            Err(e) => {
+                writeln!(interpreter.writer, "Input error: {}", e).ok();
+                break;
+            }
+        }
+
+        let trimmed = line.trim().to_string();
+        if buffer.is_empty() {
+            if trimmed == ":quit" || trimmed == ":exit" {
+                break;
+            }
+            if trimmed == ":help" {
+                write_repl_help(&mut interpreter.writer);
+                continue;
+            }
+            if trimmed == ":reset" {
+                interpreter.env = Environment::new();
+                interpreter.functions.clear();
+                writeln!(interpreter.writer, "Environment cleared.").ok();
+                continue;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with(':') {
+                writeln!(interpreter.writer, "Unknown command '{}'. Type :help.", trimmed).ok();
+                continue;
+            }
+        }
+
+        buffer.push_str(&line);
+        if !buffer.ends_with('\n') {
+            buffer.push('\n');
+        }
+
+        // A fragment is complete once it ends with the '.' terminator.
+        if buffer.trim_end().ends_with('.') {
+            let wrapped = format!("when (repl).\n{}", buffer);
+            match run_fragment(&wrapped, &mut interpreter) {
+                Ok(()) => {}
+                Err(e) => {
+                    writeln!(interpreter.writer, "{}", e).ok();
+                }
+            }
+            buffer.clear();
+        }
+    }
+    writeln!(interpreter.writer, "Bye.").ok();
+}
+
+fn run_fragment<R: BufRead, W: Write>(
+    source: &str,
+    interpreter: &mut Interpreter<R, W>,
+) -> Result<(), SSharpError> {
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize()?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse()?;
+    interpreter.interpret(&program)
+}
+
+fn write_repl_help<W: Write>(writer: &mut W) {
+    writeln!(writer, "S# interactive mode:").ok();
+    writeln!(writer, "  Write any S# fragment ending with '.' and it runs at once.").ok();
+    writeln!(writer, "  Variables and functions persist between fragments.").ok();
+    writeln!(writer, "  Fragments can span several lines; they run once the '.' arrives.").ok();
+    writeln!(writer, "  :help    Show this help.").ok();
+    writeln!(writer, "  :reset   Forget all variables and functions.").ok();
+    writeln!(writer, "  :quit    Exit (Ctrl-D works too).").ok();
+    writeln!(writer, "  Example: save 40 ++ 2 to answer.").ok();
 }
 
 #[cfg(test)]
@@ -262,5 +456,165 @@ mod tests {
 
         let output = run_ssharp(source, "").unwrap();
         assert_eq!(output, "Hello\nHello\nHello\n");
+    }
+
+    #[test]
+    fn test_if_else() {
+        let source = r#"
+            when (test).
+            save 20 to age.
+            if (age >= 18), display "granted", else display "denied".
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert!(output.contains("granted"));
+        assert!(!output.contains("denied"));
+
+        let source2 = r#"
+            when (test).
+            save 15 to age.
+            if (age >= 18), display "granted", else display "denied".
+        "#;
+        let output2 = run_ssharp(source2, "").unwrap();
+        assert!(output2.contains("denied"));
+        assert!(!output2.contains("granted"));
+    }
+
+    #[test]
+    fn test_else_if_chain() {
+        let source = r#"
+            when (test).
+            save 5 to x.
+            if (x), display "a", else if (not x), display "b", else display "c".
+        "#;
+        // x=5 is truthy -> "a"
+        let output = run_ssharp(source, "").unwrap();
+        assert!(output.contains("a"));
+    }
+
+    #[test]
+    fn test_function_call() {
+        let source = r#"
+            when (test).
+            define function add(a, b), return a + b.
+            save add(5, 3) to result.
+            display result.
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert_eq!(output.trim(), "8");
+    }
+
+    #[test]
+    fn test_function_call_nested_and_scope() {
+        let source = r#"
+            when (test).
+            define function double(n), return n * 2.
+            define function add(a, b), return a + b.
+            save double(add(2, 3)) to result.
+            display result.
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert_eq!(output.trim(), "10");
+    }
+
+    #[test]
+    fn test_function_arity_error() {
+        let source = r#"
+            when (test).
+            define function add(a, b), return a + b.
+            display add(1).
+        "#;
+        assert!(run_ssharp(source, "").is_err());
+    }
+
+    #[test]
+    fn test_boolean_logic() {
+        let source = r#"
+            when (test).
+            if (true or false), display "or-ok".
+            if (true and not false), display "and-ok".
+            if (not true), display "should-not-appear", else display "not-ok".
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert!(output.contains("or-ok"));
+        assert!(output.contains("and-ok"));
+        assert!(output.contains("not-ok"));
+        assert!(!output.contains("should-not-appear"));
+    }
+
+    #[test]
+    fn test_string_escapes() {
+        let source = "when (test). display \"a\\nb\". display \"say \\\"hi\\\"\".";
+        let output = run_ssharp(source, "").unwrap();
+        assert_eq!(output, "a\nb\nsay \"hi\"\n");
+    }
+
+    #[test]
+    fn test_not_equal() {
+        let source = r#"
+            when (test).
+            if (1 != 2), display "diff-ok", else display "broken".
+            if (3 != 3), display "broken", else display "same-ok".
+            if ("a" != "b"), display "str-ok".
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert!(output.contains("diff-ok"));
+        assert!(output.contains("same-ok"));
+        assert!(output.contains("str-ok"));
+        assert!(!output.contains("broken"));
+    }
+
+    #[test]
+    fn test_explicit_concat() {
+        // `++` always concatenates text; `+` adds numbers
+        let source = r#"
+            when (test).
+            display 1 ++ 2.
+            display 1 + 2.
+            display "hi " ++ "there".
+            save "Ada" to name.
+            display "hello, " ++ name ++ "!".
+        "#;
+        let output = run_ssharp(source, "").unwrap();
+        assert_eq!(output, "12\n3\nhi there\nhello, Ada!\n");
+    }
+
+    fn run_repl_session(input: &str) -> String {
+        let reader = Cursor::new(input.as_bytes().to_vec());
+        let mut writer = Vec::new();
+        run_repl(reader, &mut writer);
+        String::from_utf8(writer).unwrap()
+    }
+
+    #[test]
+    fn test_repl_keeps_state_between_fragments() {
+        let output = run_repl_session(
+            "save 5 to x.\ndisplay x.\ndefine function double(n), return n * 2.\ndisplay double(x).\n",
+        );
+        assert!(output.contains("interactive mode"));
+        assert!(output.contains(">> 5\n"));
+        assert!(output.contains(">> 10\n"));
+        assert!(output.contains("Bye."));
+    }
+
+    #[test]
+    fn test_repl_multiline_fragment_and_ask() {
+        let output = run_repl_session(
+            "if (1 != 2),\ndisplay \"ne-ok\".\nask \"Name?\" and save to n.\nAda\ndisplay \"hi \" ++ n.\n",
+        );
+        assert!(output.contains("ne-ok"));
+        assert!(output.contains("hi Ada"));
+    }
+
+    #[test]
+    fn test_repl_commands_and_error_recovery() {
+        let output = run_repl_session(
+            "display 1 ++ 2.\n:bogus\nthis is not valid ssharp.\ndisplay \"after-error\".\n:reset\n:quit\ndisplay 999.\n",
+        );
+        assert!(output.contains("12"));
+        assert!(output.contains("Unknown command"));
+        assert!(output.contains("after-error"));
+        assert!(output.contains("Environment cleared."));
+        // The REPL survives parse errors and :quit stops the session.
+        assert!(!output.contains("999"));
     }
 }
