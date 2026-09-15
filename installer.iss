@@ -12,7 +12,7 @@
 ; ============================================================================
 
 #define AppName "S#"
-#define AppVersion "0.1.0"
+#define AppVersion "0.1.1"
 #define AppPublisher "S# Language Project"
 #define AppExeName "ssharp.exe"
 
@@ -20,9 +20,9 @@
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-AppPublisherURL=https://github.com/ssharp-lang/ssharp
-AppSupportURL=https://github.com/ssharp-lang/ssharp
-AppUpdatesURL=https://github.com/ssharp-lang/ssharp
+AppPublisherURL=https://github.com/neo-zero23/S-Sharp
+AppSupportURL=https://github.com/neo-zero23/S-Sharp
+AppUpdatesURL=https://github.com/neo-zero23/S-Sharp
 DefaultDirName={localappdata}\Programs\SSharp
 DefaultGroupName={#AppName}
 OutputBaseFilename=SSharp-Setup

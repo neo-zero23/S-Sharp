@@ -1,0 +1,6 @@
+when (start_clicked).
+save 20 to age.
+if (age >= 18), display "Access granted", else display "Access denied".
+save 15 to age2.
+if (age2 >= 18), display "Access granted", else display "Access denied".
+if (age2 < 10), display "child", else if (age2 < 18), display "teen", else display "adult".

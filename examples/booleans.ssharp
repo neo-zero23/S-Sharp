@@ -1,0 +1,9 @@
+when (test).
+if (true or false), display "or works".
+if (true and not false), display "and-not works".
+if (not true), display "broken", else display "not works".
+save true and false to both.
+if (both), display "broken", else display "variables hold booleans".
+save 5 to x.
+if (x and true), display "truthy number works".
+if (not 0), display "zero is falsy".

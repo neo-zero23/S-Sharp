@@ -1,0 +1,7 @@
+when (test).
+save "Ada" to name.
+if (name != "admin"), display "hello, " ++ name ++ "!".
+if (name != "Ada"), display "broken", else display "equality still works".
+display 1 ++ 2.
+display 1 + 2.
+if (1 != 2), display "numbers can differ".

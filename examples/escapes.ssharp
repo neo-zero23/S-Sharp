@@ -1,0 +1,5 @@
+when (test).
+display "line1\nline2".
+display "col1\tcol2".
+display "she said \"hi\"".
+display "back\\slash".

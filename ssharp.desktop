@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=S# REPL
+Comment=Lenguaje de programación educativo inspirado en Scratch
+Exec=ssharp
+Terminal=true
+Type=Application
+Categories=Development;Education;
+Keywords=S#;ssharp;programming;educational;
