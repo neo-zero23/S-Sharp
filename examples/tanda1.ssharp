@@ -1,0 +1,11 @@
+when (start_clicked).
+# Tanda 1: list mutation, for-each, functions with body, %, range/str/num, ==.
+save [1, 2, 3] to xs.
+add 4 to xs.
+change item 1 of xs to 10.
+remove item 2 of xs.
+display xs.
+define function sum(ys), save 0 to total, for each y in ys, save total + y to total, return total.
+display sum(xs).
+display sum(range(5)).
+for each n in range(6), if (n % 2 == 0), display str(n) ++ " is even", else display str(n) ++ " is odd".

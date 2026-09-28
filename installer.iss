@@ -12,7 +12,7 @@
 ; ============================================================================
 
 #define AppName "S#"
-#define AppVersion "0.1.1"
+#define AppVersion "0.2.0"
 #define AppPublisher "S# Language Project"
 #define AppExeName "ssharp.exe"
 

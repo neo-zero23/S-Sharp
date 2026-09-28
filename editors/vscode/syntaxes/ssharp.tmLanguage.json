@@ -1,0 +1,63 @@
+{
+  "scopeName": "source.ssharp",
+  "name": "S#",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#keyword" },
+    { "include": "#builtin" },
+    { "include": "#function-call" },
+    { "include": "#operator" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.ssharp",
+      "match": "#.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.ssharp",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.ssharp",
+          "match": "\\\\(n|t|r|\"|\\\\|0)"
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.ssharp",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.ssharp",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "keyword": {
+      "name": "keyword.control.ssharp",
+      "match": "\\b(when|ask|save|to|and|display|if|else|repeat|while|define|function|return|true|false|or|not|item|of|add|change|remove|for|each|in|try|catch|import|read|write|file|break|continue|div)\\b"
+    },
+    "builtin": {
+      "name": "support.function.builtin.ssharp",
+      "match": "\\b(len|range|str|num|upper|lower|split|join|sqrt|type)\\b(?=\\s*\\()"
+    },
+    "function-call": {
+      "name": "entity.name.function.ssharp",
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()"
+    },
+    "operator": {
+      "name": "keyword.operator.ssharp",
+      "match": "\\+\\+|==|!=|>=|<=|[+\\-*/%><=]"
+    },
+    "punctuation": {
+      "name": "punctuation.separator.ssharp",
+      "match": "[.,()\\[\\]]"
+    }
+  }
+}

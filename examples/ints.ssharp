@@ -1,0 +1,11 @@
+when (ints).
+# Literals without a point are ints; `/` stays float, `div` truncates.
+display type(42).
+display type(4.5).
+display type(6 + 1).
+display type(6 + 1.5).
+display 7 / 2.
+display 7 div 2.
+display 0 - 7 div 2.
+display 2 * 3 * 5.
+display num("12") + 1.

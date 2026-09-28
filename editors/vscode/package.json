@@ -1,0 +1,28 @@
+{
+  "name": "ssharp",
+  "displayName": "S#",
+  "description": "Syntax highlighting for the S# educational programming language",
+  "version": "0.2.0",
+  "publisher": "ssharp",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.0.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ssharp",
+        "aliases": ["S#", "ssharp"],
+        "extensions": [".ssharp"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ssharp",
+        "scopeName": "source.ssharp",
+        "path": "./syntaxes/ssharp.tmLanguage.json"
+      }
+    ]
+  }
+}

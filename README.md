@@ -27,12 +27,43 @@ if (age < 18), display "Access denied".
 - **Variables**: `save <expression> to <name>.` or `<expr> and save to <name>.`
 - **Input/Output**: `ask "prompt"`, `display <value>`
 - **Conditionals**: `if (condition), action.` and `if (condition), action, else other_action.` (`else if` chains supported)
-- **Loops**: `repeat (count), action.` and `while (condition), action.`
-- **Functions**: `define function name(params), return value.` then call it as `name(arg1, arg2)` inside any expression
+- **Loops**: `repeat (count), action.`, `while (condition), action.` and `for each x in xs, action.` — iterates lists element by element; iterating a string yields one single-character string per step (`for each c in "hey", display c.` prints `h`, `e`, `y`)
+- **Loop control**: `break.` exits the loop, `continue.` skips to the next round. Inside a loop, code after an `if` goes in `else`: `for each n in range(10), if (n == 3), continue, else display n.`
+- **Functions**: `define function name(params), action1, action2, return value.` — body actions run in an isolated scope, then the `return` expression is evaluated. The single-expression form still works: `define function double(n), return n * 2.` The final `return` is mandatory: S# has no null value, so a function without `return` is a parse-time error, not a silent nothing.
+- **Lists**: `[1, "two", true]` literals, 1-based access `item 2 of xs` (works on strings too: `item 1 of "hey"` is `"h"`), length with `len(xs)` / `len("hey")`
+- **List mutation**: `add 4 to xs.` (push), `change item 1 of xs to 10.`, `remove item 2 of xs.`
 - **Booleans**: `true`, `false`, `not`, `or`, `and` (e.g. `if (true and not false), display "yes".`)
-- **Comparison**: `=`, `!=`, `>`, `<`, `>=`, `<=`
+- **Comparison**: `==`, `!=`, `>`, `<`, `>=`, `<=` (note: single `=` is a lex error — use `==`)
+- **Arithmetic**: `+`, `-`, `*` (int-preserving with overflow checks), `/` (always float: `7 / 2` is `3.5`), `div` (truncating integer division: `7 div 2` is `3`), `%` (modulo, exact on ints)
+- **Builtins**: `len(x)`, `range(n)`, `str(x)`, `num(x)`, `upper(s)`, `lower(s)`, `split(s, sep)`, `join(list, sep)`, `sqrt(n)`, `type(x)` (`int` / `float` / `string` / `bool` / `list`) — note `range` is 1-based on purpose: `range(4)` is `[1, 2, 3, 4]`, so `item i of range(n)` lines up with Scratch-style indexing instead of Python-style `0..n-1`
+- **Error handling**: `try risky, catch display "fallback".` or with the message bound: `try risky, catch e, display e.` — catches runtime errors only (bad index, missing file, division by zero); parse errors are programmer errors and abort
+- **Modules**: `import "utils.ssharp".` — runs the file once (repeat imports and cycles are skipped), paths resolve relative to the importing file; the file's functions and variables become available to the importer
+- **File I/O**: `read "data.txt" and save to content.` and `write content to file "out.txt".` (overwrite; missing files are runtime errors, so they work with `try/catch`; single reads capped at 10 MiB)
 - **Concatenation**: `++` always joins text (`1 ++ 2` is `"12"`), while `+` adds numbers (`1 + 2` is `3`)
+- **Comments**: `#` starts a comment until end of line
 - **Strings**: escape sequences `\n`, `\t`, `\r`, `\"`, `\\`
+
+## Reserved words
+
+These cannot be used as variable or function names:
+
+```
+when ask save to and display if else repeat while define function return
+true false or not item of add change remove for each in
+try catch import read write file break continue div
+```
+
+## Formatter, editors, tutorial
+
+```bash
+ssharp fmt messy.ssharp          # print canonical form: one statement per line
+ssharp fmt --write messy.ssharp  # reformat the file in place
+```
+
+`fmt` parses before formatting and refuses broken code; comments and
+strings (even `"periods."` and decimals like `3.14`) survive untouched.
+Syntax highlighting ships in `editors/` (VS Code + Kate, installed by
+`./install.sh`). New to S#? Start with [docs/tutorial.md](docs/tutorial.md).
 
 ## Building and Running
 

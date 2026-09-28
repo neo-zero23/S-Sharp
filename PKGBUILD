@@ -1,6 +1,6 @@
 # Maintainer: S# Language Project
 pkgname=ssharp
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="S# - lenguaje de programación educativo inspirado en Scratch"
 arch=('x86_64')

@@ -1,0 +1,7 @@
+when (loops).
+# break exits the loop, continue skips to the next round.
+# Code after an `if` inside a loop goes in `else`.
+for each n in range(8), if (n == 3), continue, else display n.
+save 0 to i.
+while (true), save i + 1 to i, if (i == 4), break, else display i * 10.
+display "done".

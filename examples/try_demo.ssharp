@@ -1,0 +1,6 @@
+when (try_demo).
+try display item 9 of [1, 2], catch display "fell back".
+try display item 1 of [1, 2], catch display "should not print".
+try read "no-such-file.txt" and save to c, catch e, display "read failed".
+try display 1 / 0, catch e, display e.
+display "still running".

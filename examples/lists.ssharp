@@ -1,0 +1,10 @@
+when (start_clicked).
+# Lists: literals with [ ], 1-based access with `item i of xs`, length with len().
+save ["Ada", "Grace", "Linus"] to heroes.
+display heroes.
+display len(heroes).
+display item 1 of heroes.
+display item len(heroes) of heroes.
+save [10, 20, 30] to scores.
+display item 2 of scores.
+display item 1 of "hello".

@@ -1,0 +1,5 @@
+when (string_utils).
+# Shared library: import it with `import "string_utils.ssharp".`
+define function shout(s), return upper(s) ++ "!".
+define function csv(line), return split(line, ",").
+define function initials(full), save split(full, " ") to parts, save "" to out, for each p in parts, save out ++ item 1 of p to out, return upper(out).

@@ -70,6 +70,8 @@ impl Lexer {
                     '.' => TokenKind::Period,
                     '(' => TokenKind::LParen,
                     ')' => TokenKind::RParen,
+                    '[' => TokenKind::LBracket,
+                    ']' => TokenKind::RBracket,
                     '+' => {
                         if self.peek() == Some('+') {
                             self.advance();
@@ -81,7 +83,19 @@ impl Lexer {
                     '-' => TokenKind::Minus,
                     '*' => TokenKind::Star,
                     '/' => TokenKind::Slash,
-                    '=' => TokenKind::Equals,
+                    '%' => TokenKind::Percent,
+                    '=' => {
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            TokenKind::EqEq
+                        } else {
+                            return Err(SSharpError::LexError {
+                                message: "Unexpected '=', did you mean '==' for comparison?".to_string(),
+                                line,
+                                column,
+                            });
+                        }
+                    }
                     '!' => {
                         if self.peek() == Some('=') {
                             self.advance();
@@ -213,6 +227,7 @@ impl Lexer {
         let start_column = self.column;
 
         let mut num_str = String::new();
+        let mut is_float = false;
 
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
@@ -220,6 +235,7 @@ impl Lexer {
                 self.advance();
             } else if ch == '.' && self.peek_next().map_or(false, |next| next.is_ascii_digit()) {
                 // Decimal point followed by digits
+                is_float = true;
                 num_str.push('.');
                 self.advance();
             } else {
@@ -227,13 +243,20 @@ impl Lexer {
             }
         }
 
-        let val = num_str.parse::<f64>().map_err(|_| SSharpError::LexError {
-            message: format!("Invalid number literal '{}'", num_str),
-            line: start_line,
-            column: start_column,
-        })?;
-
-        Ok(Token::new(TokenKind::Number(val), start_line, start_column))
+        if is_float {
+            let val = num_str.parse::<f64>().map_err(|_| SSharpError::LexError {
+                message: format!("Invalid number literal '{}'", num_str),
+                line: start_line,
+                column: start_column,
+            })?;
+            Ok(Token::new(TokenKind::Float(val), start_line, start_column))
+        } else {
+            num_str.parse::<i64>().map(|val| Token::new(TokenKind::Integer(val), start_line, start_column)).map_err(|_| SSharpError::LexError {
+                message: format!("Integer literal '{}' is out of range (use a decimal point for big magnitudes)", num_str),
+                line: start_line,
+                column: start_column,
+            })
+        }
     }
 
     fn read_identifier_or_keyword(&mut self) -> Token {
@@ -268,6 +291,23 @@ impl Lexer {
             "false" => TokenKind::False,
             "or" => TokenKind::Or,
             "not" => TokenKind::Not,
+            "item" => TokenKind::Item,
+            "of" => TokenKind::Of,
+            "add" => TokenKind::Add,
+            "change" => TokenKind::Change,
+            "remove" => TokenKind::Remove,
+            "for" => TokenKind::For,
+            "each" => TokenKind::Each,
+            "in" => TokenKind::In,
+            "try" => TokenKind::Try,
+            "catch" => TokenKind::Catch,
+            "import" => TokenKind::Import,
+            "read" => TokenKind::Read,
+            "write" => TokenKind::Write,
+            "file" => TokenKind::File,
+            "break" => TokenKind::Break,
+            "continue" => TokenKind::Continue,
+            "div" => TokenKind::DivInt,
             _ => TokenKind::Identifier(word),
         };
 
@@ -282,14 +322,15 @@ mod tests {
 
     #[test]
     fn test_keywords_and_identifiers() {
-        let mut lexer = Lexer::new("when ask save to and display if else repeat while define function return true false or not score");
+        let mut lexer = Lexer::new("when ask save to and display if else repeat while define function return true false or not item of add change remove for each in try catch import read write file break continue div score");
         let tokens = lexer.tokenize().unwrap();
         let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
             vec![
                 When, Ask, Save, To, And, Display, If, Else, Repeat, While, Define, Function, Return,
-                True, False, Or, Not,
+                True, False, Or, Not, Item, Of, Add, Change, Remove, For, Each, In,
+                Try, Catch, Import, Read, Write, File, Break, Continue, DivInt,
                 Identifier("score".into()),
                 Eof
             ]
@@ -320,9 +361,9 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                Number(18.0),
+                Integer(18),
                 Period,
-                Number(3.14),
+                Float(3.14),
                 Period,
                 Eof
             ]
@@ -347,13 +388,67 @@ mod tests {
 
     #[test]
     fn test_operators() {
-        let mut lexer = Lexer::new("+ - * / = > < >= <= != ++");
+        let mut lexer = Lexer::new("+ - * / % == > < >= <= != ++ [ ]");
         let tokens = lexer.tokenize().unwrap();
         let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
         assert_eq!(
             kinds,
-            vec![Plus, Minus, Star, Slash, Equals, Greater, Less, GreaterEq, LessEq, NotEqual, PlusPlus, Eof]
+            vec![Plus, Minus, Star, Slash, Percent, EqEq, Greater, Less, GreaterEq, LessEq, NotEqual, PlusPlus, LBracket, RBracket, Eof]
         );
+    }
+
+    #[test]
+    fn test_lone_equals_error() {
+        let mut lexer = Lexer::new("if (x = 1).");
+        let err = lexer.tokenize().unwrap_err();
+        match err {
+            SSharpError::LexError { message, line, column } => {
+                assert!(message.contains("'=='"), "Unexpected message: {}", message);
+                assert_eq!(line, 1);
+                assert_eq!(column, 7);
+            }
+            _ => panic!("Expected LexError"),
+        }
+    }
+
+    #[test]
+    fn test_list_literal_and_comment() {
+        let mut lexer = Lexer::new("save [1, 2] to xs. # a comment\n display item 1 of xs.");
+        let tokens = lexer.tokenize().unwrap();
+        let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                Save,
+                LBracket,
+                Integer(1),
+                Comma,
+                Integer(2),
+                RBracket,
+                To,
+                Identifier("xs".into()),
+                Period,
+                Display,
+                Item,
+                Integer(1),
+                Of,
+                Identifier("xs".into()),
+                Period,
+                Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_integer_overflow_error() {
+        let mut lexer = Lexer::new("display 99999999999999999999.");
+        let err = lexer.tokenize().unwrap_err();
+        match err {
+            SSharpError::LexError { message, .. } => {
+                assert!(message.contains("out of range"), "Unexpected message: {}", message);
+            }
+            _ => panic!("Expected LexError"),
+        }
     }
 
     #[test]
@@ -371,11 +466,11 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_symbol_error() {        let mut lexer = Lexer::new("when %");
+    fn test_unknown_symbol_error() {        let mut lexer = Lexer::new("when @");
         let err = lexer.tokenize().unwrap_err();
         match err {
             SSharpError::LexError { message, line, column } => {
-                assert_eq!(message, "Unexpected character '%'");
+                assert_eq!(message, "Unexpected character '@'");
                 assert_eq!(line, 1);
                 assert_eq!(column, 6);
             }

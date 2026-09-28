@@ -1,0 +1,2 @@
+when (fizzbuzz).
+for each n in range(15), if (n % 15 == 0), display "FizzBuzz", else if (n % 3 == 0), display "Fizz", else if (n % 5 == 0), display "Buzz", else display n.

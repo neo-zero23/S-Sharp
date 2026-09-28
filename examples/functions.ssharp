@@ -1,9 +1,9 @@
 when (test).
-define function add(a, b), return a + b.
+define function plus(a, b), return a + b.
 define function double(n), return n * 2.
-save add(5, 3) to result.
+save plus(5, 3) to result.
 display result.
-save double(add(2, 3)) to nested.
+save double(plus(2, 3)) to nested.
 display nested.
 save double(21) to answer.
 display answer.

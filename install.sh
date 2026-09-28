@@ -123,5 +123,26 @@ else
     warn "ssharp.desktop no encontrado en el repo, se omite."
 fi
 
+# --- 8. Optional: editor support (syntax highlighting) -------------------------
+step "Soporte de editores (opcional)..."
+if [ -d "editors/vscode" ] && command -v code >/dev/null 2>&1; then
+    VS_EXT_DIR="$HOME/.vscode/extensions/ssharp-0.2.0"
+    if mkdir -p "$VS_EXT_DIR" && cp -rf editors/vscode/. "$VS_EXT_DIR/"; then
+        ok "extensión de VS Code instalada (reiniciá VS Code)."
+    else
+        warn "no se pudo instalar la extensión de VS Code."
+    fi
+else
+    warn "VS Code no detectado (comando 'code'); se omite la extensión."
+fi
+if [ -f "editors/kate/ssharp.xml" ]; then
+    KATE_DIR="$HOME/.local/share/org.kde.syntax-highlighting/syntax"
+    if mkdir -p "$KATE_DIR" && cp -f "editors/kate/ssharp.xml" "$KATE_DIR/ssharp.xml"; then
+        ok "sintaxis de Kate instalada."
+    else
+        warn "no se pudo instalar la sintaxis de Kate."
+    fi
+fi
+
 printf '\nInstalación completa. Probá con: ssharp examples/hola.ssharp\n'
 exit 0

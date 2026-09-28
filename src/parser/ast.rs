@@ -35,19 +35,62 @@ pub enum Stmt {
         condition: Expr,
         actions: Vec<Stmt>,
     },
+    ForEach {
+        var: String,
+        iterable: Expr,
+        actions: Vec<Stmt>,
+    },
+    AddTo {
+        value: Expr,
+        target: String,
+    },
+    ChangeItem {
+        target: String,
+        index: Expr,
+        value: Expr,
+    },
+    RemoveItem {
+        target: String,
+        index: Expr,
+    },
     FunctionDef {
         name: String,
         params: Vec<String>,
+        body: Vec<Stmt>,
         return_expr: Expr,
     },
+    Try {
+        actions: Vec<Stmt>,
+        error_var: Option<String>,
+        catch_actions: Vec<Stmt>,
+    },
+    Import {
+        path: Expr,
+    },
+    Read {
+        path: Expr,
+        target: String,
+    },
+    Write {
+        value: Expr,
+        path: Expr,
+    },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Number(f64),
+    Int(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
+    List(Vec<Expr>),
     Identifier(String),
+    Index {
+        list: Box<Expr>,
+        index: Box<Expr>,
+    },
     Call {
         name: String,
         args: Vec<Expr>,
@@ -78,6 +121,8 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod,
+    DivInt,
     Eq,
     NotEq,
     Gt,

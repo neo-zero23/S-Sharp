@@ -1,0 +1,6 @@
+when (use_import).
+import "string_utils.ssharp".
+display shout("hello").
+display csv("a,b,c").
+display initials("ada lovelace").
+display type(shout("x")).

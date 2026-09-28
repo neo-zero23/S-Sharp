@@ -18,10 +18,28 @@ pub enum TokenKind {
     False,
     Or,
     Not,
+    Item,
+    Of,
+    Add,
+    Change,
+    Remove,
+    For,
+    Each,
+    In,
+    Try,
+    Catch,
+    Import,
+    Read,
+    Write,
+    File,
+    Break,
+    Continue,
+    DivInt,
 
     // Literals & Identifiers
     Identifier(String),
-    Number(f64),
+    Integer(i64),
+    Float(f64),
     String(String),
 
     // Punctuation
@@ -29,6 +47,8 @@ pub enum TokenKind {
     Period,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
 
     // Operators
     Plus,
@@ -36,7 +56,8 @@ pub enum TokenKind {
     Minus,
     Star,
     Slash,
-    Equals,
+    Percent,
+    EqEq,
     NotEqual,
     Greater,
     Less,

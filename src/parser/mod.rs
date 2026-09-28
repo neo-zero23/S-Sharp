@@ -105,11 +105,11 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> Result<Stmt, SSharpError> {
-        let action = self.parse_action()?;
+        let action = self.parse_action(false)?;
 
         // If action is ask, assign, or display at top-level, it requires a terminating '.'
         match action {
-            Stmt::Ask { .. } | Stmt::Assign { .. } | Stmt::Display { .. } => {
+            Stmt::Ask { .. } | Stmt::Assign { .. } | Stmt::Display { .. } | Stmt::AddTo { .. } | Stmt::ChangeItem { .. } | Stmt::RemoveItem { .. } | Stmt::Import { .. } | Stmt::Read { .. } | Stmt::Write { .. } | Stmt::Break | Stmt::Continue => {
                 let tok = self.peek();
                 if matches!(tok.kind, TokenKind::Period) {
                     self.advance();
@@ -122,23 +122,39 @@ impl Parser {
                     })
                 }
             }
-            Stmt::If { .. } | Stmt::Repeat { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. } => {
+            Stmt::If { .. } | Stmt::Repeat { .. } | Stmt::While { .. } | Stmt::ForEach { .. } | Stmt::Try { .. } | Stmt::FunctionDef { .. } => {
                 // These statements consume their closing '.' as part of their block definition
                 Ok(action)
             }
         }
     }
 
-    fn parse_action(&mut self) -> Result<Stmt, SSharpError> {
+    fn parse_action(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
         let tok = self.peek().clone();
 
         match &tok.kind {
             TokenKind::Ask => self.parse_ask_stmt(),
             TokenKind::Save => self.parse_save_stmt(),
             TokenKind::Display => self.parse_display_stmt(),
-            TokenKind::If => self.parse_if_stmt(),
-            TokenKind::Repeat => self.parse_repeat_stmt(),
-            TokenKind::While => self.parse_while_stmt(),
+            TokenKind::If => self.parse_if_stmt(nested),
+            TokenKind::Repeat => self.parse_repeat_stmt(nested),
+            TokenKind::While => self.parse_while_stmt(nested),
+            TokenKind::For => self.parse_foreach_stmt(nested),
+            TokenKind::Add => self.parse_add_stmt(),
+            TokenKind::Change => self.parse_change_stmt(),
+            TokenKind::Remove => self.parse_remove_stmt(),
+            TokenKind::Try => self.parse_try_stmt(nested),
+            TokenKind::Import => self.parse_import_stmt(),
+            TokenKind::Read => self.parse_read_stmt(),
+            TokenKind::Write => self.parse_write_stmt(),
+            TokenKind::Break => {
+                self.advance();
+                Ok(Stmt::Break)
+            }
+            TokenKind::Continue => {
+                self.advance();
+                Ok(Stmt::Continue)
+            }
             TokenKind::Define => self.parse_function_def_stmt(),
             _ => {
                 // Check if it's an expression followed by 'and save to <ident>'
@@ -249,7 +265,7 @@ impl Parser {
         Ok(Stmt::Display { value })
     }
 
-    fn parse_if_stmt(&mut self) -> Result<Stmt, SSharpError> {
+    fn parse_if_stmt(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
         self.advance(); // consume 'if'
 
         self.consume(TokenKind::LParen, "Expected '(' after 'if'")?;
@@ -257,7 +273,7 @@ impl Parser {
         self.consume(TokenKind::RParen, "Expected ')' after if condition")?;
         self.consume(TokenKind::Comma, "Expected ',' after 'if (...)' condition")?;
 
-        let actions = self.parse_then_actions()?;
+        let actions = self.parse_then_actions(nested)?;
 
         // Optional `else` branch: `..., else action1, action2.`
         // An optional comma after `else` is allowed: `else, display "x".`
@@ -268,10 +284,10 @@ impl Parser {
             }
             // `else if (...)...` chaining: single nested if consumes its own '.'
             if matches!(self.peek_kind(), TokenKind::If) {
-                let nested = self.parse_if_stmt()?;
-                Some(vec![nested])
+                let nested_if = self.parse_if_stmt(nested)?;
+                Some(vec![nested_if])
             } else {
-                Some(self.parse_action_list()?)
+                Some(self.parse_action_list(nested)?)
             }
         } else {
             None
@@ -284,7 +300,7 @@ impl Parser {
         })
     }
 
-    fn parse_repeat_stmt(&mut self) -> Result<Stmt, SSharpError> {
+    fn parse_repeat_stmt(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
         self.advance(); // consume 'repeat'
 
         self.consume(TokenKind::LParen, "Expected '(' after 'repeat'")?;
@@ -292,11 +308,11 @@ impl Parser {
         self.consume(TokenKind::RParen, "Expected ')' after repeat count")?;
         self.consume(TokenKind::Comma, "Expected ',' after 'repeat (...)'")?;
 
-        let actions = self.parse_action_list()?;
+        let actions = self.parse_action_list(nested)?;
         Ok(Stmt::Repeat { count, actions })
     }
 
-    fn parse_while_stmt(&mut self) -> Result<Stmt, SSharpError> {
+    fn parse_while_stmt(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
         self.advance(); // consume 'while'
 
         self.consume(TokenKind::LParen, "Expected '(' after 'while'")?;
@@ -304,8 +320,187 @@ impl Parser {
         self.consume(TokenKind::RParen, "Expected ')' after while condition")?;
         self.consume(TokenKind::Comma, "Expected ',' after 'while (...)' condition")?;
 
-        let actions = self.parse_action_list()?;
+        let actions = self.parse_action_list(nested)?;
         Ok(Stmt::While { condition, actions })
+    }
+
+    fn parse_foreach_stmt(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'for'
+        self.consume(TokenKind::Each, "Expected 'each' after 'for'")?;
+
+        let var_tok = self.peek().clone();
+        let var = match &var_tok.kind {
+            TokenKind::Identifier(id) => {
+                self.advance();
+                id.clone()
+            }
+            _ => {
+                return Err(SSharpError::ParseError {
+                    message: format!("Expected loop variable identifier after 'for each', found {:?}", var_tok.kind),
+                    line: var_tok.line,
+                    column: var_tok.column,
+                });
+            }
+        };
+
+        self.consume(TokenKind::In, "Expected 'in' after loop variable")?;
+        let iterable = self.parse_expression()?;
+        self.consume(TokenKind::Comma, "Expected ',' after 'for each x in ...'")?;
+
+        let actions = self.parse_action_list(nested)?;
+        Ok(Stmt::ForEach { var, iterable, actions })
+    }
+
+    fn parse_add_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'add'
+
+        let value = self.parse_expression()?;
+        self.consume(TokenKind::To, "Expected 'to' after value in add statement")?;
+
+        let target_tok = self.peek().clone();
+        let target = match &target_tok.kind {
+            TokenKind::Identifier(id) => {
+                self.advance();
+                id.clone()
+            }
+            _ => {
+                return Err(SSharpError::ParseError {
+                    message: format!("Expected target list identifier after 'to', found {:?}", target_tok.kind),
+                    line: target_tok.line,
+                    column: target_tok.column,
+                });
+            }
+        };
+
+        Ok(Stmt::AddTo { value, target })
+    }
+
+    fn parse_change_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'change'
+        self.consume(TokenKind::Item, "Expected 'item' after 'change'")?;
+
+        let index = self.parse_expression()?;
+        self.consume(TokenKind::Of, "Expected 'of' after index in 'change item ... of ...'")?;
+
+        let target_tok = self.peek().clone();
+        let target = match &target_tok.kind {
+            TokenKind::Identifier(id) => {
+                self.advance();
+                id.clone()
+            }
+            _ => {
+                return Err(SSharpError::ParseError {
+                    message: format!("Expected target list identifier, found {:?}", target_tok.kind),
+                    line: target_tok.line,
+                    column: target_tok.column,
+                });
+            }
+        };
+
+        self.consume(TokenKind::To, "Expected 'to' after list name in 'change item ... of ... to ...'")?;
+        let value = self.parse_expression()?;
+
+        Ok(Stmt::ChangeItem { target, index, value })
+    }
+
+    fn parse_remove_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'remove'
+        self.consume(TokenKind::Item, "Expected 'item' after 'remove'")?;
+
+        let index = self.parse_expression()?;
+        self.consume(TokenKind::Of, "Expected 'of' after index in 'remove item ... of ...'")?;
+
+        let target_tok = self.peek().clone();
+        let target = match &target_tok.kind {
+            TokenKind::Identifier(id) => {
+                self.advance();
+                id.clone()
+            }
+            _ => {
+                return Err(SSharpError::ParseError {
+                    message: format!("Expected target list identifier, found {:?}", target_tok.kind),
+                    line: target_tok.line,
+                    column: target_tok.column,
+                });
+            }
+        };
+
+        Ok(Stmt::RemoveItem { target, index })
+    }
+
+    fn parse_try_stmt(&mut self, nested: bool) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'try'
+
+        let actions = self.parse_action_list(nested)?;
+
+        // The action list stops at `, catch`, leaving it unconsumed.
+        self.consume(TokenKind::Comma, "Expected ',' and 'catch' after 'try' actions")?;
+        self.consume(TokenKind::Catch, "Expected 'catch' after 'try' actions")?;
+        if matches!(self.peek_kind(), TokenKind::Comma) {
+            self.advance(); // consume optional ',' after 'catch'
+        }
+
+        // Optional error variable: `catch e, <actions>` (identifier + comma).
+        // `catch x and save to y.` is actions, not a binding (lookahead).
+        let error_var = match (self.peek_kind().clone(), self.peek_next_kind().cloned()) {
+            (TokenKind::Identifier(name), Some(TokenKind::Comma)) => {
+                self.advance(); // consume variable name
+                self.advance(); // consume ','
+                Some(name)
+            }
+            _ => None,
+        };
+
+        let catch_actions = self.parse_action_list(nested)?;
+        Ok(Stmt::Try { actions, error_var, catch_actions })
+    }
+
+    fn parse_import_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'import'
+
+        let path = self.parse_expression()?;
+        Ok(Stmt::Import { path })
+    }
+
+    fn parse_read_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'read'
+
+        let path = self.parse_expression()?;
+
+        let mut target = String::new();
+        if matches!(self.peek_kind(), TokenKind::And) {
+            self.advance(); // consume 'and'
+            self.consume(TokenKind::Save, "Expected 'save' after 'and'")?;
+            self.consume(TokenKind::To, "Expected 'to' after 'save'")?;
+
+            let target_tok = self.peek().clone();
+            target = match &target_tok.kind {
+                TokenKind::Identifier(id) => {
+                    self.advance();
+                    id.clone()
+                }
+                _ => {
+                    return Err(SSharpError::ParseError {
+                        message: format!("Expected variable identifier after 'save to', found {:?}", target_tok.kind),
+                        line: target_tok.line,
+                        column: target_tok.column,
+                    });
+                }
+            };
+        }
+
+        Ok(Stmt::Read { path, target })
+    }
+
+    fn parse_write_stmt(&mut self) -> Result<Stmt, SSharpError> {
+        self.advance(); // consume 'write'
+
+        let value = self.parse_expression()?;
+        self.consume(TokenKind::To, "Expected 'to' after value in write statement")?;
+        self.consume(TokenKind::File, "Expected 'file' after 'to' in write statement (did you mean 'write <value> to file \"path\".'?)")?;
+        let path = self.parse_expression()?;
+
+        Ok(Stmt::Write { value, path })
     }
 
     fn parse_function_def_stmt(&mut self) -> Result<Stmt, SSharpError> {
@@ -354,22 +549,61 @@ impl Parser {
         }
         self.consume(TokenKind::RParen, "Expected ')' after function parameters")?;
         self.consume(TokenKind::Comma, "Expected ',' after function header")?;
-        self.consume(TokenKind::Return, "Expected 'return' in function definition")?;
 
-        let return_expr = self.parse_expression()?;
-        self.consume(TokenKind::Period, "Expected '.' at end of function definition")?;
+        // Body: comma-separated actions, ending with `return <expr>.`
+        // The single-expression form still works: `define function f(a), return a.`
+        // A `.` after a body action is also accepted as a separator.
+        let mut body = Vec::new();
+        let return_expr = loop {
+            if matches!(self.peek_kind(), TokenKind::Return) {
+                self.advance(); // consume 'return'
+                let ret = self.parse_expression()?;
+                self.consume(TokenKind::Period, "Expected '.' at end of function definition")?;
+                break ret;
+            }
+            let action = self.parse_action(true)?;
+            body.push(action);
+            let tok = self.peek().clone();
+            match &tok.kind {
+                TokenKind::Comma => {
+                    self.advance(); // consume ',' and continue with next action or return
+                }
+                TokenKind::Period => {
+                    self.advance(); // consume '.' separator left by a nested block
+                }
+                _ => {
+                    return Err(SSharpError::ParseError {
+                        message: format!("Expected ',' or 'return' in function body, found {:?}", tok.kind),
+                        line: tok.line,
+                        column: tok.column,
+                    });
+                }
+            }
+        };
 
-        Ok(Stmt::FunctionDef { name, params, return_expr })
+        Ok(Stmt::FunctionDef { name, params, body, return_expr })
     }
 
-    fn parse_then_actions(&mut self) -> Result<Vec<Stmt>, SSharpError> {
+    fn parse_then_actions(&mut self, nested: bool) -> Result<Vec<Stmt>, SSharpError> {
         let mut actions = Vec::new();
         loop {
-            let action = self.parse_action()?;
+            // Element actions are always nested: only the outermost list
+            // owns the closing '.'.
+            let action = self.parse_action(true)?;
             actions.push(action);
 
             let tok = self.peek();
             if matches!(tok.kind, TokenKind::Comma) {
+                // `, return` ends the block: the return belongs to an
+                // enclosing function body, so leave it unconsumed.
+                // Same for `, catch`: it belongs to an enclosing try.
+                let next_is_block_end = matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                    Some(TokenKind::Return) | Some(TokenKind::Catch)
+                );
+                if next_is_block_end {
+                    break;
+                }
                 // `, else` ends the then-branch (comma is the separator before else)
                 let next_is_else = matches!(
                     self.tokens.get(self.pos + 1).map(|t| &t.kind),
@@ -383,7 +617,10 @@ impl Parser {
                 // `else` without preceding comma also ends the then-branch
                 break;
             } else if matches!(tok.kind, TokenKind::Period) {
-                self.advance(); // consume '.' and finish (no else branch)
+                // A nested block leaves its closing '.' for the enclosing block.
+                if !nested {
+                    self.advance(); // consume '.' and finish (no else branch)
+                }
                 break;
             } else {
                 return Err(SSharpError::ParseError {
@@ -396,17 +633,32 @@ impl Parser {
         Ok(actions)
     }
 
-    fn parse_action_list(&mut self) -> Result<Vec<Stmt>, SSharpError> {
+    fn parse_action_list(&mut self, nested: bool) -> Result<Vec<Stmt>, SSharpError> {
         let mut actions = Vec::new();
         loop {
-            let action = self.parse_action()?;
+            // Element actions are always nested: only the outermost list
+            // owns the closing '.'.
+            let action = self.parse_action(true)?;
             actions.push(action);
 
             let tok = self.peek();
             if matches!(tok.kind, TokenKind::Comma) {
+                // `, return` ends the block: the return belongs to an
+                // enclosing function body, so leave it unconsumed.
+                // Same for `, catch`: it belongs to an enclosing try.
+                let next_is_block_end = matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                    Some(TokenKind::Return) | Some(TokenKind::Catch)
+                );
+                if next_is_block_end {
+                    break;
+                }
                 self.advance(); // consume ',' and continue to next action
             } else if matches!(tok.kind, TokenKind::Period) {
-                self.advance(); // consume '.' and finish action list
+                // A nested block leaves its closing '.' for the enclosing block.
+                if !nested {
+                    self.advance(); // consume '.' and finish action list
+                }
                 break;
             } else {
                 return Err(SSharpError::ParseError {
@@ -472,7 +724,7 @@ impl Parser {
 
     fn match_comparison_op(&mut self) -> Option<BinOp> {
         let op = match self.peek_kind() {
-            TokenKind::Equals => BinOp::Eq,
+            TokenKind::EqEq => BinOp::Eq,
             TokenKind::NotEqual => BinOp::NotEq,
             TokenKind::Greater => BinOp::Gt,
             TokenKind::Less => BinOp::Lt,
@@ -529,6 +781,8 @@ impl Parser {
         let op = match self.peek_kind() {
             TokenKind::Star => BinOp::Mul,
             TokenKind::Slash => BinOp::Div,
+            TokenKind::Percent => BinOp::Mod,
+            TokenKind::DivInt => BinOp::DivInt,
             _ => return None,
         };
         self.advance();
@@ -559,9 +813,13 @@ impl Parser {
         let tok = self.peek().clone();
 
         match &tok.kind {
-            TokenKind::Number(val) => {
+            TokenKind::Integer(val) => {
                 self.advance();
-                Ok(Expr::Number(*val))
+                Ok(Expr::Int(*val))
+            }
+            TokenKind::Float(val) => {
+                self.advance();
+                Ok(Expr::Float(*val))
             }
             TokenKind::String(val) => {
                 self.advance();
@@ -574,6 +832,33 @@ impl Parser {
             TokenKind::False => {
                 self.advance();
                 Ok(Expr::Bool(false))
+            }
+            TokenKind::LBracket => {
+                self.advance(); // consume '['
+                let mut elements = Vec::new();
+                if !matches!(self.peek_kind(), TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.parse_expression()?);
+                        if matches!(self.peek_kind(), TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.consume(TokenKind::RBracket, "Expected ']' after list elements")?;
+                Ok(Expr::List(elements))
+            }
+            TokenKind::Item => {
+                // Scratch-style access: `item <index-expr> of <list-expr>` (1-based).
+                self.advance(); // consume 'item'
+                let index = self.parse_expression()?;
+                self.consume(TokenKind::Of, "Expected 'of' after index in 'item ... of ...'")?;
+                let list = self.parse_expression()?;
+                Ok(Expr::Index {
+                    list: Box::new(list),
+                    index: Box::new(index),
+                })
             }
             TokenKind::Identifier(id) => {
                 let name = id.clone();
@@ -605,7 +890,7 @@ impl Parser {
                 Ok(expr)
             }
             _ => Err(SSharpError::ParseError {
-                message: format!("Expected expression (number, string, true/false, variable, function call, or '(expr)'), found {:?}", tok.kind),
+                message: format!("Expected expression (number, string, list, true/false, variable, function call, 'item ... of ...', or '(expr)'), found {:?}", tok.kind),
                 line: tok.line,
                 column: tok.column,
             }),
@@ -703,18 +988,18 @@ mod tests {
 
     #[test]
     fn test_parse_function_call_and_booleans() {
-        let source = "when (test). define function add(a, b), return a + b. save add(5, 3) to result. if (true or not false), display result.";
+        let source = "when (test). define function plus(a, b), return a + b. save plus(5, 3) to result. if (true or not false), display result.";
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let program = parser.parse().unwrap();
 
         assert_eq!(program.event.body.len(), 3);
-        assert!(matches!(&program.event.body[0], Stmt::FunctionDef { name, .. } if name == "add"));
+        assert!(matches!(&program.event.body[0], Stmt::FunctionDef { name, .. } if name == "plus"));
         match &program.event.body[1] {
             Stmt::Assign { value, target } => {
                 assert_eq!(target, "result");
-                assert!(matches!(value, Expr::Call { name, args } if name == "add" && args.len() == 2));
+                assert!(matches!(value, Expr::Call { name, args } if name == "plus" && args.len() == 2));
             }
             _ => panic!("Expected Stmt::Assign with call"),
         }
@@ -764,8 +1049,232 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_repeat_and_save() {
-        let source = "when (test). save 10 to score. repeat (5), display score.";
+    fn test_parse_list_literal_and_index() {
+        let source = r#"when (test). save [1, "two", true] to xs. display item 2 of xs. display len(xs)."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 3);
+        match &program.event.body[0] {
+            Stmt::Assign { value, target } => {
+                assert_eq!(target, "xs");
+                assert!(matches!(value, Expr::List(items) if items.len() == 3));
+            }
+            _ => panic!("Expected Stmt::Assign with list literal"),
+        }
+        match &program.event.body[1] {
+            Stmt::Display { value } => {
+                assert!(matches!(value, Expr::Index { .. }));
+            }
+            _ => panic!("Expected Stmt::Display with index"),
+        }
+        match &program.event.body[2] {
+            Stmt::Display { value } => {
+                assert!(matches!(value, Expr::Call { name, args } if name == "len" && args.len() == 1));
+            }
+            _ => panic!("Expected Stmt::Display with len() call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_list() {
+        let source = "when (test). save [] to xs.";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::Assign { value, target } => {
+                assert_eq!(target, "xs");
+                assert!(matches!(value, Expr::List(items) if items.is_empty()));
+            }
+            _ => panic!("Expected Stmt::Assign with empty list"),
+        }
+    }
+
+    #[test]
+    fn test_parse_equality_and_modulo() {
+        let source = r#"when (test). if (n % 15 == 0), display "fizzbuzz"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::If { condition, .. } => {
+                assert!(matches!(condition, Expr::Binary { op: BinOp::Eq, .. }));
+                match &**match condition {
+                    Expr::Binary { left, .. } => left,
+                    _ => unreachable!(),
+                } {
+                    Expr::Binary { op, .. } => assert!(matches!(op, BinOp::Mod)),
+                    _ => panic!("Expected modulo on the left of =="),
+                }
+            }
+            _ => panic!("Expected Stmt::If"),
+        }
+    }
+
+    #[test]
+    fn test_parse_foreach() {
+        let source = "when (test). save [1, 2] to xs. for each x in xs, display x.";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 2);
+        match &program.event.body[1] {
+            Stmt::ForEach { var, actions, .. } => {
+                assert_eq!(var, "x");
+                assert_eq!(actions.len(), 1);
+            }
+            _ => panic!("Expected Stmt::ForEach"),
+        }
+    }
+
+    #[test]
+    fn test_parse_list_mutation() {
+        let source = "when (test). add 5 to xs. change item 1 of xs to 9. remove item 2 of xs.";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 3);
+        assert!(matches!(&program.event.body[0], Stmt::AddTo { target, .. } if target == "xs"));
+        assert!(matches!(&program.event.body[1], Stmt::ChangeItem { target, .. } if target == "xs"));
+        assert!(matches!(&program.event.body[2], Stmt::RemoveItem { target, .. } if target == "xs"));
+    }
+
+    #[test]
+    fn test_parse_function_with_body() {        let source = "when (test). define function f(a), save a * 2 to t, save t + 1 to u, return u.";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::FunctionDef { name, params, body, return_expr } => {
+                assert_eq!(name, "f");
+                assert_eq!(params, &vec!["a".to_string()]);
+                assert_eq!(body.len(), 2);
+                assert!(matches!(body[0], Stmt::Assign { .. }));
+                assert!(matches!(return_expr, Expr::Identifier(id) if id == "u"));
+            }
+            _ => panic!("Expected Stmt::FunctionDef with body"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_body_with_nested_block_and_return() {
+        // `, return` after a nested block belongs to the function, not the block.
+        let source = "when (test). define function f(xs), for each x in xs, display x, return len(xs).";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::FunctionDef { body, return_expr, .. } => {
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Stmt::ForEach { .. }));
+                assert!(matches!(return_expr, Expr::Call { name, .. } if name == "len"));
+            }
+            _ => panic!("Expected Stmt::FunctionDef"),
+        }
+    }
+
+    #[test]
+    fn test_parse_try_catch() {
+        let source = r#"when (test). try display risky, catch e, display e."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 1);
+        match &program.event.body[0] {
+            Stmt::Try { actions, error_var, catch_actions } => {
+                assert_eq!(actions.len(), 1);
+                assert_eq!(error_var, &Some("e".to_string()));
+                assert_eq!(catch_actions.len(), 1);
+            }
+            _ => panic!("Expected Stmt::Try"),
+        }
+    }
+
+    #[test]
+    fn test_parse_try_catch_without_var() {
+        let source = r#"when (test). try display risky, catch display "fallback"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::Try { actions, error_var, catch_actions } => {
+                assert_eq!(actions.len(), 1);
+                assert!(error_var.is_none());
+                assert_eq!(catch_actions.len(), 1);
+            }
+            _ => panic!("Expected Stmt::Try"),
+        }
+    }
+
+    #[test]
+    fn test_parse_try_catch_nested_block() {
+        // The try body can hold a nested block; `, catch` still closes it.
+        let source = r#"when (test). try repeat (2), display "x", catch display "fallback"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        match &program.event.body[0] {
+            Stmt::Try { actions, catch_actions, .. } => {
+                assert_eq!(actions.len(), 1);
+                assert!(matches!(actions[0], Stmt::Repeat { .. }));
+                assert_eq!(catch_actions.len(), 1);
+            }
+            _ => panic!("Expected Stmt::Try"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_read_write() {
+        let source = r#"when (test). import "utils.ssharp". read "data.txt" and save to content. write content to file "out.txt"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+
+        assert_eq!(program.event.body.len(), 3);
+        assert!(matches!(&program.event.body[0], Stmt::Import { .. }));
+        match &program.event.body[1] {
+            Stmt::Read { target, .. } => assert_eq!(target, "content"),
+            _ => panic!("Expected Stmt::Read"),
+        }
+        assert!(matches!(&program.event.body[2], Stmt::Write { .. }));
+    }
+
+    #[test]
+    fn test_nested_if_else_inside_repeat() {
+        // The inner if must not steal the repeat's closing '.'.
+        let source = r#"when (test). repeat (2), if (true), display "a", else display "b". display "done"."#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        assert_eq!(program.event.body.len(), 2);
+        assert!(matches!(&program.event.body[0], Stmt::Repeat { .. }));
+    }
+
+    #[test]
+    fn test_parse_repeat_and_save() {        let source = "when (test). save 10 to score. repeat (5), display score.";
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
